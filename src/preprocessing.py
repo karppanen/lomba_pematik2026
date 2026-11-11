@@ -1,29 +1,19 @@
-"""Preprocessing data ISPU DKI Jakarta.
-
-Jalankan dari folder root:
-    python src/preprocessing.py
-"""
-
-from __future__ import annotations
-
 import json
-import logging
 import re
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 OUTPUTS_DIR = ROOT / "outputs"
 
 RAW_PATH = DATA_DIR / "ispu_raw.xls"
 PROCESSED_PATH = DATA_DIR / "ispu_processed.csv"
-PREPROCESSING_LOG_PATH = OUTPUTS_DIR / "preprocessing_log.json"
+LOG_PATH = OUTPUTS_DIR / "preprocessing_log.json"
 
 TANGGAL = "tanggal"
 STASIUN = "stasiun"
@@ -31,13 +21,11 @@ TARGET = "pm25_target"
 SPLIT = "split"
 
 HISTORY_FEATURES = ["lag_1", "lag_3", "lag_7", "rolling_mean_7"]
-NUMERIC_FEATURES = [*HISTORY_FEATURES, "bulan"]
-FEATURES = [STASIUN, *NUMERIC_FEATURES]
+NUMERIC_FEATURES = HISTORY_FEATURES + ["bulan"]
+FEATURES = [STASIUN] + NUMERIC_FEATURES
 
 SPLIT_LABELS = ("train", "validation", "test")
 SPLIT_RATIOS = {"train": 0.70, "validation": 0.15, "test": 0.15}
-
-LOGGER = logging.getLogger("preprocessing")
 
 NUMERIC_SOURCE_COLUMNS = [
     "pm_sepuluh",
@@ -67,38 +55,27 @@ STATION_NAMES = {
 }
 
 
-def _json_default(value: Any) -> Any:
-    if hasattr(value, "item"):
-        return value.item()
-    return str(value)
+def json_default(value):
+    return value.item() if hasattr(value, "item") else str(value)
 
 
-def load_raw_data(path: Path = RAW_PATH) -> pd.DataFrame:
-    """File mentah berekstensi .xls, tetapi isinya tabel HTML."""
+def load_raw_data(path=RAW_PATH):
     if not path.exists():
-        raise FileNotFoundError(
-            f"Dataset mentah tidak ditemukan: {path}\n"
-            "Salin file ISPU asli ke data/ispu_raw.xls terlebih dahulu."
-        )
+        raise FileNotFoundError(f"File tidak ditemukan: {path}")
 
-    text = path.read_text(encoding="utf-8")
-    tables = pd.read_html(StringIO(text))
-    if not tables:
-        raise ValueError(f"Tidak ada tabel yang bisa dibaca dari {path}.")
-
+    # File .xls ini isinya tabel HTML, bukan workbook Excel.
+    tables = pd.read_html(StringIO(path.read_text(encoding="utf-8")))
     df = tables[0].copy()
-    df.columns = [str(column).strip().lower() for column in df.columns]
+    df.columns = [str(col).strip().lower() for col in df.columns]
 
-    missing_columns = REQUIRED_COLUMNS.difference(df.columns)
-    if missing_columns:
-        raise ValueError(
-            "Kolom wajib tidak ditemukan: " + ", ".join(sorted(missing_columns))
-        )
+    missing = REQUIRED_COLUMNS.difference(df.columns)
+    if missing:
+        raise ValueError("Kolom tidak ditemukan: " + ", ".join(sorted(missing)))
 
     return df
 
 
-def standardize_station(value: Any) -> str | None:
+def standardize_station(value):
     text = " ".join(str(value).upper().split())
     match = re.match(r"^DKI\s*([1-5])\b", text)
     if not match:
@@ -106,40 +83,27 @@ def standardize_station(value: Any) -> str | None:
     return STATION_NAMES[f"DKI{match.group(1)}"]
 
 
-def _parse_dates(df: pd.DataFrame) -> pd.Series:
-    period = (
-        pd.to_numeric(df["periode_data"], errors="coerce")
-        .astype("Int64")
-        .astype(str)
-    )
-    day = (
-        pd.to_numeric(df["tanggal"], errors="coerce")
-        .astype("Int64")
-        .astype(str)
-        .str.zfill(2)
-    )
-    return pd.to_datetime(period + day, format="%Y%m%d", errors="coerce")
-
-
-def clean_records(
-    df_raw: pd.DataFrame, log: dict[str, Any]
-) -> tuple[pd.DataFrame, dict[str, Any]]:
+def clean_records(df_raw, log):
     df = df_raw.copy()
     df["stasiun_raw"] = df["stasiun"].astype(str).str.strip()
     df["stasiun"] = df["stasiun_raw"].map(standardize_station)
 
-    unknown_stations = sorted(df.loc[df["stasiun"].isna(), "stasiun_raw"].unique())
-    if unknown_stations:
-        raise ValueError(
-            "Nama stasiun tidak dikenali: " + ", ".join(unknown_stations)
-        )
+    if df["stasiun"].isna().any():
+        unknown = sorted(df.loc[df["stasiun"].isna(), "stasiun_raw"].unique())
+        raise ValueError("Stasiun tidak dikenal: " + ", ".join(unknown))
 
-    for column in NUMERIC_SOURCE_COLUMNS:
-        df[column] = pd.to_numeric(df[column], errors="coerce")
+    for col in NUMERIC_SOURCE_COLUMNS:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    df["tanggal_dt"] = _parse_dates(df)
+    periode = pd.to_numeric(df["periode_data"], errors="coerce").astype("Int64")
+    hari = pd.to_numeric(df["tanggal"], errors="coerce").astype("Int64")
+    df["tanggal_dt"] = pd.to_datetime(
+        periode.astype(str) + hari.astype(str).str.zfill(2),
+        format="%Y%m%d",
+        errors="coerce",
+    )
 
-    invalid_rows = df.loc[df["tanggal_dt"].isna()].copy()
+    invalid_rows = df[df["tanggal_dt"].isna()]
     invalid_dates = [
         {
             "periode_data": int(row.periode_data),
@@ -154,13 +118,14 @@ def clean_records(
         }
         for row in invalid_rows.itertuples(index=False)
     ]
-    df = df.loc[df["tanggal_dt"].notna()].copy()
+
+    df = df[df["tanggal_dt"].notna()].copy()
     df[TANGGAL] = df["tanggal_dt"]
     df = df.drop(columns=["tanggal_dt"])
 
     duplicate_mask = df.duplicated(subset=[STASIUN, TANGGAL], keep="first")
-    duplicate_rows = df.loc[duplicate_mask].copy()
-    df = df.loc[~duplicate_mask].copy()
+    duplicate_rows = df[duplicate_mask]
+    df = df[~duplicate_mask].copy()
 
     aliases = (
         df.groupby(["stasiun_raw", STASIUN], dropna=False)
@@ -179,7 +144,7 @@ def clean_records(
         "pm25_kosong_mentah": int(df_raw["pm_duakomalima"].isna().sum()),
         "pm25_kosong_setelah_cleaning": int(df["pm_duakomalima"].isna().sum()),
         "nilai_numerik_kosong": {
-            column: int(df[column].isna().sum()) for column in NUMERIC_SOURCE_COLUMNS
+            col: int(df[col].isna().sum()) for col in NUMERIC_SOURCE_COLUMNS
         },
         "rentang_tanggal_setelah_cleaning": {
             "mulai": str(df[TANGGAL].min().date()),
@@ -189,29 +154,21 @@ def clean_records(
     }
 
     if len(duplicate_rows):
-        LOGGER.warning(
-            "%d duplikasi stasiun-tanggal dibuang (baris pertama dipertahankan).",
-            len(duplicate_rows),
-        )
+        print(f"{len(duplicate_rows)} duplikasi stasiun-tanggal dibuang")
 
     return df, log
 
 
-def build_daily_panel(
-    df_clean: pd.DataFrame, log: dict[str, Any]
-) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Membuat grid harian penuh per stasiun tanpa mengisi nilai yang kosong."""
+def build_daily_panel(df_clean, log):
     start = df_clean[TANGGAL].min()
     end = df_clean[TANGGAL].max()
     dates = pd.date_range(start, end, freq="D")
     stations = sorted(df_clean[STASIUN].unique())
 
-    grid = (
-        pd.MultiIndex.from_product(
-            [stations, dates], names=[STASIUN, TANGGAL]
-        )
-        .to_frame(index=False)
-    )
+    grid = pd.MultiIndex.from_product(
+        [stations, dates], names=[STASIUN, TANGGAL]
+    ).to_frame(index=False)
+
     panel = grid.merge(
         df_clean.drop(columns=["stasiun_raw"]),
         on=[STASIUN, TANGGAL],
@@ -219,22 +176,13 @@ def build_daily_panel(
         validate="one_to_one",
     ).sort_values([STASIUN, TANGGAL], ignore_index=True)
 
-    observed_rows = int(len(df_clean))
-    observed_pm25 = int(panel["pm_duakomalima"].notna().sum())
-    missing_panel = grid.merge(
+    missing = grid.merge(
         df_clean[[STASIUN, TANGGAL]],
         on=[STASIUN, TANGGAL],
         how="left",
         indicator=True,
     )
-    missing_panel = missing_panel.loc[missing_panel["_merge"] == "left_only"]
-    missing_dates = [
-        {
-            "stasiun": row.stasiun,
-            "tanggal": str(row.tanggal.date()),
-        }
-        for row in missing_panel[[STASIUN, TANGGAL]].itertuples(index=False)
-    ]
+    missing = missing[missing["_merge"] == "left_only"]
 
     log["kalender"] = {
         "jumlah_tanggal_unik": int(len(dates)),
@@ -243,19 +191,19 @@ def build_daily_panel(
         "jumlah_stasiun": int(len(stations)),
         "daftar_stasiun": stations,
         "jumlah_hari_stasiun_diharapkan": int(len(grid)),
-        "jumlah_hari_stasiun_teramati": observed_rows,
-        "jumlah_pm25_valid": observed_pm25,
-        "jumlah_hari_stasiun_hilang": int(len(grid) - observed_rows),
-        "contoh_hari_stasiun_hilang": missing_dates[:20],
+        "jumlah_hari_stasiun_teramati": int(len(df_clean)),
+        "jumlah_pm25_valid": int(panel["pm_duakomalima"].notna().sum()),
+        "jumlah_hari_stasiun_hilang": int(len(grid) - len(df_clean)),
+        "contoh_hari_stasiun_hilang": [
+            {"stasiun": row.stasiun, "tanggal": str(row.tanggal.date())}
+            for row in missing[[STASIUN, TANGGAL]].head(20).itertuples(index=False)
+        ],
     }
 
     return panel, log
 
 
-def add_temporal_split(
-    panel: pd.DataFrame, log: dict[str, Any]
-) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Membagi tanggal unik secara kronologis, bukan membagi baris secara acak."""
+def add_split(panel, log):
     dates = sorted(pd.Timestamp(value) for value in panel[TANGGAL].unique())
     n_dates = len(dates)
     n_train = int(round(n_dates * SPLIT_RATIOS["train"]))
@@ -276,54 +224,50 @@ def add_temporal_split(
     ):
         raise ValueError("Split tanggal saling tumpang tindih.")
 
-    date_to_split = {
+    split_by_date = {
         **{date: "train" for date in train_dates},
         **{date: "validation" for date in validation_dates},
         **{date: "test" for date in test_dates},
     }
-    panel = panel.copy()
-    panel[SPLIT] = panel[TANGGAL].map(date_to_split)
 
+    panel = panel.copy()
+    panel[SPLIT] = panel[TANGGAL].map(split_by_date)
     if panel[SPLIT].isna().any():
         raise ValueError("Ada tanggal yang tidak mendapat label split.")
 
-    split_info = {
+    log["split"] = {
         "rasio": SPLIT_RATIOS,
-        "jumlah_tanggal_unik": int(n_dates),
+        "jumlah_tanggal_unik": n_dates,
         "train": {
-            "jumlah_tanggal": int(n_train),
-            "mulai": str(pd.Timestamp(min(train_dates)).date()),
-            "selesai": str(pd.Timestamp(max(train_dates)).date()),
+            "jumlah_tanggal": n_train,
+            "mulai": str(min(train_dates).date()),
+            "selesai": str(max(train_dates).date()),
         },
         "validation": {
-            "jumlah_tanggal": int(n_validation),
-            "mulai": str(pd.Timestamp(min(validation_dates)).date()),
-            "selesai": str(pd.Timestamp(max(validation_dates)).date()),
+            "jumlah_tanggal": n_validation,
+            "mulai": str(min(validation_dates).date()),
+            "selesai": str(max(validation_dates).date()),
         },
         "test": {
-            "jumlah_tanggal": int(n_test),
-            "mulai": str(pd.Timestamp(min(test_dates)).date()),
-            "selesai": str(pd.Timestamp(max(test_dates)).date()),
+            "jumlah_tanggal": n_test,
+            "mulai": str(min(test_dates).date()),
+            "selesai": str(max(test_dates).date()),
         },
     }
-    log["split"] = split_info
 
     return panel, log
 
 
-def add_features(
-    panel: pd.DataFrame, log: dict[str, Any]
-) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Lag dan rolling dihitung per stasiun dari nilai sebelum tanggal target."""
+def add_features(panel, log):
     df = panel.sort_values([STASIUN, TANGGAL]).copy()
     grouped = df.groupby(STASIUN, sort=False)["pm_duakomalima"]
 
     df["lag_1"] = grouped.shift(1)
     df["lag_3"] = grouped.shift(3)
     df["lag_7"] = grouped.shift(7)
-    df["rolling_mean_7"] = df.groupby(STASIUN, sort=False)[
-        "pm_duakomalima"
-    ].transform(lambda series: series.shift(1).rolling(7, min_periods=7).mean())
+    df["rolling_mean_7"] = grouped.transform(
+        lambda series: series.shift(1).rolling(7, min_periods=7).mean()
+    )
     df["bulan"] = df[TANGGAL].dt.month
     df[TARGET] = df["pm_duakomalima"]
 
@@ -331,28 +275,18 @@ def add_features(
     history_missing = (~target_missing) & df[HISTORY_FEATURES].isna().any(axis=1)
     eligible = ~target_missing & ~history_missing
 
-    dropped = df.loc[~eligible].copy()
+    dropped = df[~eligible].copy()
     dropped["alasan"] = np.select(
-        [target_missing.loc[~eligible], history_missing.loc[~eligible]],
+        [target_missing[~eligible], history_missing[~eligible]],
         ["Target PM2.5 kosong", "Riwayat historis tidak lengkap"],
         default="Lainnya",
     )
     dropped["kolom_riwayat_kosong"] = dropped[HISTORY_FEATURES].apply(
         lambda row: ", ".join(row.index[row.isna()]), axis=1
     )
-    dropped_examples = [
-        {
-            "tanggal": str(row.tanggal.date()),
-            "stasiun": row.stasiun,
-            "alasan": row.alasan,
-            "kolom_riwayat_kosong": row.kolom_riwayat_kosong,
-        }
-        for row in dropped.head(12).itertuples(index=False)
-    ]
 
     model_df = df.loc[
-        eligible,
-        [TANGGAL, STASIUN, *NUMERIC_FEATURES, TARGET, SPLIT],
+        eligible, [TANGGAL, STASIUN, *NUMERIC_FEATURES, TARGET, SPLIT]
     ].copy()
     model_df["rolling_mean_7"] = model_df["rolling_mean_7"].round(2)
 
@@ -372,7 +306,15 @@ def add_features(
         "target_kosong": int(target_missing.sum()),
         "riwayat_tidak_lengkap": int(history_missing.sum()),
         "total_dibuang": int(len(dropped)),
-        "contoh_dibuang": dropped_examples,
+        "contoh_dibuang": [
+            {
+                "tanggal": str(row.tanggal.date()),
+                "stasiun": row.stasiun,
+                "alasan": row.alasan,
+                "kolom_riwayat_kosong": row.kolom_riwayat_kosong,
+            }
+            for row in dropped.head(12).itertuples(index=False)
+        ],
         "jumlah_sampel_siap_model": int(len(model_df)),
         "rentang_sampel": {
             "mulai": str(model_df[TANGGAL].min().date()),
@@ -381,7 +323,7 @@ def add_features(
     }
 
     for label in SPLIT_LABELS:
-        subset = model_df.loc[model_df[SPLIT] == label]
+        subset = model_df[model_df[SPLIT] == label]
         log["split"][label]["jumlah_baris_setelah_fitur"] = int(len(subset))
         log["split"][label]["rentang_baris_setelah_fitur"] = {
             "mulai": str(subset[TANGGAL].min().date()),
@@ -391,63 +333,47 @@ def add_features(
     return model_df, log
 
 
-def build_processed_dataset() -> tuple[pd.DataFrame, dict[str, Any]]:
-    log: dict[str, Any] = {
+def main():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    log = {
         "dibuat_pada": datetime.now().astimezone().isoformat(timespec="seconds"),
         "file_sumber": str(RAW_PATH.relative_to(ROOT)),
     }
 
-    LOGGER.info("Membaca data mentah: %s", RAW_PATH)
+    print(f"Membaca data mentah: {RAW_PATH}")
     df_raw = load_raw_data()
-    LOGGER.info("%d baris x %d kolom", *df_raw.shape)
+    print(f"{len(df_raw)} baris x {df_raw.shape[1]} kolom")
 
-    LOGGER.info("Membersihkan tanggal, stasiun, dan nilai numerik")
+    print("Membersihkan data")
     df_clean, log = clean_records(df_raw, log)
     cleaning = log["cleaning"]
-    LOGGER.info(
-        "Tanggal tidak valid: %d | Duplikasi: %d | PM2.5 kosong: %d",
-        len(cleaning["tanggal_tidak_valid"]),
-        cleaning["duplikasi_stasiun_tanggal_dibuang"],
-        cleaning["pm25_kosong_mentah"],
+    print(
+        f"Tanggal tidak valid: {len(cleaning['tanggal_tidak_valid'])} | "
+        f"Duplikasi: {cleaning['duplikasi_stasiun_tanggal_dibuang']} | "
+        f"PM2.5 kosong: {cleaning['pm25_kosong_mentah']}"
     )
 
-    LOGGER.info("Membangun kalender harian dan fitur historis")
+    print("Membuat kalender dan fitur")
     panel, log = build_daily_panel(df_clean, log)
-    panel, log = add_temporal_split(panel, log)
+    panel, log = add_split(panel, log)
     model_df, log = add_features(panel, log)
-    fitur = log["fitur"]
-    LOGGER.info(
-        "Hari stasiun hilang: %d | Sampel siap model: %d",
-        log["kalender"]["jumlah_hari_stasiun_hilang"],
-        fitur["jumlah_sampel_siap_model"],
-    )
-    LOGGER.info(
-        "Dibuang: target kosong=%d, riwayat tidak lengkap=%d",
-        fitur["target_kosong"],
-        fitur["riwayat_tidak_lengkap"],
+
+    print(f"Hari stasiun hilang: {log['kalender']['jumlah_hari_stasiun_hilang']}")
+    print(f"Sampel siap model: {log['fitur']['jumlah_sampel_siap_model']}")
+    print(
+        f"Dibuang: target kosong={log['fitur']['target_kosong']}, "
+        f"riwayat tidak lengkap={log['fitur']['riwayat_tidak_lengkap']}"
     )
 
-    LOGGER.info("Split temporal berdasarkan tanggal unik")
     for label in SPLIT_LABELS:
         info = log["split"][label]
-        LOGGER.info(
-            "%-10s : %d tanggal (%s s.d. %s), %d baris",
-            label,
-            info["jumlah_tanggal"],
-            info["mulai"],
-            info["selesai"],
-            info["jumlah_baris_setelah_fitur"],
+        print(
+            f"{label}: {info['jumlah_tanggal']} tanggal "
+            f"({info['mulai']} s.d. {info['selesai']}), "
+            f"{info['jumlah_baris_setelah_fitur']} baris"
         )
-
-    return model_df, log
-
-
-def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-
-    model_df, log = build_processed_dataset()
 
     model_df.to_csv(
         PROCESSED_PATH,
@@ -455,11 +381,11 @@ def main() -> None:
         date_format="%Y-%m-%d",
         float_format="%.6g",
     )
-    with PREPROCESSING_LOG_PATH.open("w", encoding="utf-8") as file:
-        json.dump(log, file, ensure_ascii=False, indent=2, default=_json_default)
+    with LOG_PATH.open("w", encoding="utf-8") as file:
+        json.dump(log, file, ensure_ascii=False, indent=2, default=json_default)
 
-    LOGGER.info("Data siap model disimpan ke: %s", PROCESSED_PATH)
-    LOGGER.info("Log preprocessing disimpan ke: %s", PREPROCESSING_LOG_PATH)
+    print(f"Data siap model: {PROCESSED_PATH}")
+    print(f"Log: {LOG_PATH}")
 
 
 if __name__ == "__main__":

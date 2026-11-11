@@ -1,18 +1,8 @@
-"""Pelatihan dan validasi model XGBoost.
-
-Jalankan dari folder root:
-    python src/train_model.py
-"""
-
-from __future__ import annotations
-
 import json
-import logging
 import time
 from datetime import datetime
 from itertools import product
 from pathlib import Path
-from typing import Any
 
 import joblib
 import numpy as np
@@ -25,15 +15,15 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 from xgboost import XGBRegressor
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 MODELS_DIR = ROOT / "models"
 OUTPUTS_DIR = ROOT / "outputs"
 
 PROCESSED_PATH = DATA_DIR / "ispu_processed.csv"
 MODEL_PATH = MODELS_DIR / "xgboost_model.joblib"
-TUNING_RESULTS_PATH = OUTPUTS_DIR / "tuning_results.csv"
-TRAINING_SUMMARY_PATH = OUTPUTS_DIR / "training_summary.json"
+TUNING_PATH = OUTPUTS_DIR / "tuning_results.csv"
+SUMMARY_PATH = OUTPUTS_DIR / "training_summary.json"
 
 TANGGAL = "tanggal"
 STASIUN = "stasiun"
@@ -42,12 +32,12 @@ SPLIT = "split"
 
 CATEGORICAL_FEATURES = [STASIUN]
 NUMERIC_FEATURES = ["lag_1", "lag_3", "lag_7", "rolling_mean_7", "bulan"]
-FEATURES = [*CATEGORICAL_FEATURES, *NUMERIC_FEATURES]
+FEATURES = CATEGORICAL_FEATURES + NUMERIC_FEATURES
 
 SPLIT_LABELS = ("train", "validation", "test")
 RANDOM_STATE = 42
 
-# Ditentukan sebelum test dievaluasi: model final dilatih ulang pada train+validation.
+# Model final dilatih ulang pada train+validation.
 REFIT_ON_TRAIN_VAL = True
 
 TUNING_GRID = {
@@ -63,83 +53,58 @@ FIXED_XGB_PARAMS = {
 MAX_BOOSTING_ROUNDS = 1500
 EARLY_STOPPING_ROUNDS = 50
 
-LOGGER = logging.getLogger("training")
+
+def json_default(value):
+    return value.item() if hasattr(value, "item") else str(value)
 
 
-def _json_default(value: Any) -> Any:
-    if hasattr(value, "item"):
-        return value.item()
-    return str(value)
-
-
-def regression_metrics(actual: pd.Series, predicted: np.ndarray) -> dict[str, float]:
+def metrics(actual, predicted):
     mae = mean_absolute_error(actual, predicted)
     rmse = np.sqrt(mean_squared_error(actual, predicted))
     return {"MAE": float(mae), "RMSE": float(rmse)}
 
 
-def load_processed_data(path=PROCESSED_PATH) -> pd.DataFrame:
-    if not path.exists():
+def load_data():
+    if not PROCESSED_PATH.exists():
         raise FileNotFoundError(
-            f"Data hasil preprocessing tidak ditemukan: {path}\n"
-            "Jalankan `python src/preprocessing.py` terlebih dahulu."
+            f"Data belum ada: {PROCESSED_PATH}. Jalankan src/preprocessing.py dulu."
         )
 
-    df = pd.read_csv(path, parse_dates=[TANGGAL])
+    df = pd.read_csv(PROCESSED_PATH, parse_dates=[TANGGAL])
     required = {TANGGAL, STASIUN, TARGET, SPLIT, *FEATURES}
     missing = required.difference(df.columns)
     if missing:
-        raise ValueError(
-            "Kolom wajib tidak ditemukan pada data processed: "
-            + ", ".join(sorted(missing))
-        )
+        raise ValueError("Kolom tidak ditemukan: " + ", ".join(sorted(missing)))
 
-    unknown_splits = set(df[SPLIT].unique()).difference(SPLIT_LABELS)
-    if unknown_splits:
-        raise ValueError(f"Label split tidak dikenal: {sorted(unknown_splits)}")
-
-    for label in SPLIT_LABELS:
-        if not (df[SPLIT] == label).any():
-            raise ValueError(f"Split '{label}' kosong.")
+    unknown = set(df[SPLIT].unique()).difference(SPLIT_LABELS)
+    if unknown:
+        raise ValueError(f"Label split tidak dikenal: {sorted(unknown)}")
 
     if df[FEATURES + [TARGET]].isna().any().any():
-        raise ValueError("Data processed masih mengandung nilai kosong.")
+        raise ValueError("Data processed masih ada nilai kosong.")
 
     return df
 
 
-def split_frames(
-    df: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Memastikan tidak ada tanggal yang masuk lebih dari satu split."""
-    train = df.loc[df[SPLIT] == "train"].copy()
-    validation = df.loc[df[SPLIT] == "validation"].copy()
-    test = df.loc[df[SPLIT] == "test"].copy()
+def split_data(df):
+    train = df[df[SPLIT] == "train"].copy()
+    validation = df[df[SPLIT] == "validation"].copy()
+    test = df[df[SPLIT] == "test"].copy()
 
-    date_sets = {
-        label: set(frame[TANGGAL])
-        for label, frame in (
-            ("train", train),
-            ("validation", validation),
-            ("test", test),
-        )
-    }
-    for first, second in (
+    frames = {"train": train, "validation": validation, "test": test}
+    for first, second in [
         ("train", "validation"),
         ("train", "test"),
         ("validation", "test"),
-    ):
-        overlap = date_sets[first] & date_sets[second]
+    ]:
+        overlap = set(frames[first][TANGGAL]) & set(frames[second][TANGGAL])
         if overlap:
-            raise ValueError(
-                f"Tanggal {first} dan {second} tumpang tindih: "
-                f"{sorted(overlap)[:5]}"
-            )
+            raise ValueError(f"Tanggal {first} dan {second} tumpang tindih.")
 
     return train, validation, test
 
 
-def build_preprocessor() -> ColumnTransformer:
+def make_preprocessor():
     return ColumnTransformer(
         transformers=[
             (
@@ -154,39 +119,33 @@ def build_preprocessor() -> ColumnTransformer:
     )
 
 
-def build_pipeline(regressor: XGBRegressor) -> Pipeline:
+def make_pipeline(model):
     return Pipeline(
-        steps=[
-            ("preprocessor", build_preprocessor()),
-            ("regressor", regressor),
+        [
+            ("preprocessor", make_preprocessor()),
+            ("regressor", model),
         ]
     )
 
 
-def iter_candidates() -> list[dict[str, Any]]:
-    keys = list(TUNING_GRID)
-    return [
-        {**dict(zip(keys, values)), **FIXED_XGB_PARAMS}
-        for values in product(*(TUNING_GRID[key] for key in keys))
-    ]
-
-
-def tune_xgboost(
-    train: pd.DataFrame, validation: pd.DataFrame
-) -> tuple[pd.DataFrame, dict[str, Any], dict[str, float]]:
-    """Pemilihan hyperparameter hanya memakai validation MAE."""
-    preprocessor = build_preprocessor()
+def tune(train, validation):
+    preprocessor = make_preprocessor()
     x_train = preprocessor.fit_transform(train[FEATURES])
     x_validation = preprocessor.transform(validation[FEATURES])
     y_train = train[TARGET].to_numpy()
     y_validation = validation[TARGET].to_numpy()
 
-    candidates = iter_candidates()
-    results: list[dict[str, Any]] = []
-    best_row: dict[str, Any] | None = None
+    keys = list(TUNING_GRID)
+    candidates = [
+        {**dict(zip(keys, values)), **FIXED_XGB_PARAMS}
+        for values in product(*(TUNING_GRID[key] for key in keys))
+    ]
 
-    LOGGER.info("Menguji %d kandidat hyperparameter", len(candidates))
-    for index, params in enumerate(candidates, start=1):
+    rows = []
+    best = None
+
+    print(f"Menguji {len(candidates)} kandidat hyperparameter")
+    for number, params in enumerate(candidates, start=1):
         started = time.perf_counter()
         model = XGBRegressor(
             objective="reg:squarederror",
@@ -204,72 +163,52 @@ def tune_xgboost(
             eval_set=[(x_validation, y_validation)],
             verbose=False,
         )
-        predictions = model.predict(x_validation)
-        metrics = regression_metrics(validation[TARGET], predictions)
+
+        pred = model.predict(x_validation)
+        score = metrics(validation[TARGET], pred)
         row = {
             **params,
             "n_estimators_maks": MAX_BOOSTING_ROUNDS,
             "best_iteration": int(model.best_iteration),
-            "val_MAE": metrics["MAE"],
-            "val_RMSE": metrics["RMSE"],
+            "val_MAE": score["MAE"],
+            "val_RMSE": score["RMSE"],
         }
-        results.append(row)
-        LOGGER.info(
-            "[%02d/%02d] depth=%d lr=%.2f mcw=%d -> MAE=%.3f | RMSE=%.3f "
-            "| iter=%d (%.1fs)",
-            index,
-            len(candidates),
-            params["max_depth"],
-            params["learning_rate"],
-            params["min_child_weight"],
-            metrics["MAE"],
-            metrics["RMSE"],
-            model.best_iteration,
-            time.perf_counter() - started,
+        rows.append(row)
+
+        print(
+            f"[{number:02d}/{len(candidates)}] depth={params['max_depth']} "
+            f"lr={params['learning_rate']:.2f} "
+            f"mcw={params['min_child_weight']} -> "
+            f"MAE={score['MAE']:.3f} RMSE={score['RMSE']:.3f} "
+            f"iter={model.best_iteration} ({time.perf_counter() - started:.1f}s)"
         )
 
-        if best_row is None or (metrics["MAE"], metrics["RMSE"]) < (
-            best_row["val_MAE"],
-            best_row["val_RMSE"],
+        if best is None or (score["MAE"], score["RMSE"]) < (
+            best["val_MAE"],
+            best["val_RMSE"],
         ):
-            best_row = row
+            best = row
 
-    if best_row is None:
-        raise RuntimeError("Tidak ada kandidat model yang berhasil dilatih.")
+    results = pd.DataFrame(rows).sort_values(["val_MAE", "val_RMSE"])
+    results = results.reset_index(drop=True)
+    results.insert(0, "peringkat", np.arange(1, len(results) + 1))
 
-    tuning_results = (
-        pd.DataFrame(results)
-        .sort_values(["val_MAE", "val_RMSE"])
-        .reset_index(drop=True)
-    )
-    tuning_results.insert(0, "peringkat", np.arange(1, len(tuning_results) + 1))
-
-    best_metrics = {
-        "MAE": float(best_row["val_MAE"]),
-        "RMSE": float(best_row["val_RMSE"]),
-    }
-    return tuning_results, best_row, best_metrics
+    best_metrics = {"MAE": float(best["val_MAE"]), "RMSE": float(best["val_RMSE"])}
+    return results, best, best_metrics
 
 
-def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
+def main():
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    LOGGER.info("Membaca data processed: %s", PROCESSED_PATH)
-    df = load_processed_data()
-    train, validation, test = split_frames(df)
-    LOGGER.info(
-        "Baris: train=%d, validation=%d, test=%d",
-        len(train),
-        len(validation),
-        len(test),
-    )
+    df = load_data()
+    train, validation, test = split_data(df)
+    print(f"Baris: train={len(train)}, validation={len(validation)}, test={len(test)}")
 
-    tuning_results, best_row, best_metrics = tune_xgboost(train, validation)
+    tuning_results, best, best_metrics = tune(train, validation)
 
     best_params = {
-        key: best_row[key]
+        key: best[key]
         for key in [
             "max_depth",
             "learning_rate",
@@ -277,24 +216,19 @@ def main() -> None:
             *FIXED_XGB_PARAMS.keys(),
         ]
     }
-    best_iteration = int(best_row["best_iteration"])
+    best_iteration = int(best["best_iteration"])
     rounds_refit = best_iteration + 1
 
-    naive_validation = regression_metrics(
-        validation[TARGET], validation["lag_1"].to_numpy()
-    )
+    naive_validation = metrics(validation[TARGET], validation["lag_1"].to_numpy())
 
-    LOGGER.info(
-        "Konfigurasi terbaik: depth=%d, lr=%.2f, mcw=%d, rounds=%d",
-        best_params["max_depth"],
-        best_params["learning_rate"],
-        best_params["min_child_weight"],
-        rounds_refit,
+    print(
+        f"Terbaik: depth={best_params['max_depth']}, "
+        f"lr={best_params['learning_rate']:.2f}, "
+        f"mcw={best_params['min_child_weight']}, rounds={rounds_refit}"
     )
-    LOGGER.info(
-        "Validation MAE: XGBoost=%.4f | Naive=%.4f",
-        best_metrics["MAE"],
-        naive_validation["MAE"],
+    print(
+        f"Validation MAE: XGBoost={best_metrics['MAE']:.4f}, "
+        f"Naive={naive_validation['MAE']:.4f}"
     )
 
     if REFIT_ON_TRAIN_VAL:
@@ -304,12 +238,7 @@ def main() -> None:
         final_train = train.copy()
         trained_on = "train"
 
-    LOGGER.info(
-        "Melatih model final pada %s (%d baris, %d boosting rounds)",
-        trained_on,
-        len(final_train),
-        rounds_refit,
-    )
+    print(f"Melatih model final pada {trained_on} ({len(final_train)} baris)")
     final_model = XGBRegressor(
         objective="reg:squarederror",
         n_estimators=rounds_refit,
@@ -318,8 +247,8 @@ def main() -> None:
         n_jobs=-1,
         **best_params,
     )
-    final_pipeline = build_pipeline(final_model)
-    final_pipeline.fit(final_train[FEATURES], final_train[TARGET])
+    pipeline = make_pipeline(final_model)
+    pipeline.fit(final_train[FEATURES], final_train[TARGET])
 
     split_summary = {
         label: {
@@ -333,7 +262,7 @@ def main() -> None:
 
     trained_at = datetime.now().astimezone().isoformat(timespec="seconds")
     bundle = {
-        "pipeline": final_pipeline,
+        "pipeline": pipeline,
         "features": FEATURES,
         "categorical_features": CATEGORICAL_FEATURES,
         "numeric_features": NUMERIC_FEATURES,
@@ -359,7 +288,7 @@ def main() -> None:
     }
 
     joblib.dump(bundle, MODEL_PATH)
-    tuning_results.to_csv(TUNING_RESULTS_PATH, index=False, float_format="%.6f")
+    tuning_results.to_csv(TUNING_PATH, index=False, float_format="%.6f")
 
     summary = {
         "dibuat_pada": trained_at,
@@ -391,13 +320,13 @@ def main() -> None:
         "fitur": FEATURES,
         "versi": bundle["versions"],
     }
-    with TRAINING_SUMMARY_PATH.open("w", encoding="utf-8") as file:
-        json.dump(summary, file, ensure_ascii=False, indent=2, default=_json_default)
+    with SUMMARY_PATH.open("w", encoding="utf-8") as file:
+        json.dump(summary, file, ensure_ascii=False, indent=2, default=json_default)
 
-    LOGGER.info("\n%s", tuning_results.head(5).to_string(index=False))
-    LOGGER.info("Model disimpan ke: %s", MODEL_PATH)
-    LOGGER.info("Hasil tuning disimpan ke: %s", TUNING_RESULTS_PATH)
-    LOGGER.info("Ringkasan training disimpan ke: %s", TRAINING_SUMMARY_PATH)
+    print(tuning_results.head(5).to_string(index=False))
+    print(f"Model: {MODEL_PATH}")
+    print(f"Hasil tuning: {TUNING_PATH}")
+    print(f"Ringkasan: {SUMMARY_PATH}")
 
 
 if __name__ == "__main__":

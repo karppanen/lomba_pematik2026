@@ -1,16 +1,6 @@
-"""Evaluasi Naive Forecast dan XGBoost pada test set yang sama.
-
-Jalankan setelah training:
-    python src/evaluate.py
-"""
-
-from __future__ import annotations
-
 import json
-import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import joblib
 import matplotlib
@@ -23,7 +13,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 MODELS_DIR = ROOT / "models"
 OUTPUTS_DIR = ROOT / "outputs"
@@ -33,12 +23,12 @@ PROCESSED_PATH = DATA_DIR / "ispu_processed.csv"
 MODEL_PATH = MODELS_DIR / "xgboost_model.joblib"
 PREDICTIONS_PATH = OUTPUTS_DIR / "predictions.csv"
 METRICS_PATH = OUTPUTS_DIR / "metrics.csv"
-METRICS_PER_STATION_PATH = OUTPUTS_DIR / "metrics_per_station.csv"
-RUN_SUMMARY_PATH = OUTPUTS_DIR / "run_summary.json"
+STATION_METRICS_PATH = OUTPUTS_DIR / "metrics_per_station.csv"
+SUMMARY_PATH = OUTPUTS_DIR / "run_summary.json"
 
 ACTUAL_VS_PREDICTED_PATH = FIGURES_DIR / "actual_vs_predicted.png"
-MODEL_COMPARISON_PATH = FIGURES_DIR / "model_comparison.png"
-FEATURE_IMPORTANCE_PATH = FIGURES_DIR / "feature_importance.png"
+COMPARISON_PATH = FIGURES_DIR / "model_comparison.png"
+IMPORTANCE_PATH = FIGURES_DIR / "feature_importance.png"
 
 TANGGAL = "tanggal"
 STASIUN = "stasiun"
@@ -48,8 +38,6 @@ FEATURES = ["stasiun", "lag_1", "lag_3", "lag_7", "rolling_mean_7", "bulan"]
 
 REPRESENTATIVE_STATION = "DKI1 Bundaran HI"
 FIGURE_DPI = 200
-
-LOGGER = logging.getLogger("evaluation")
 
 COLORS = {
     "actual": "#111827",
@@ -73,27 +61,25 @@ BULAN_ID = {
 }
 
 
-def format_tanggal_id(value: pd.Timestamp) -> str:
+def format_tanggal(value):
     return f"{value.day} {BULAN_ID[value.month]} {value.year}"
 
 
-def regression_metrics(actual: pd.Series, predicted: np.ndarray) -> dict[str, float]:
+def metrics(actual, predicted):
     return {
         "MAE": float(mean_absolute_error(actual, predicted)),
         "RMSE": float(np.sqrt(mean_squared_error(actual, predicted))),
     }
 
 
-def load_inputs() -> tuple[pd.DataFrame, dict[str, Any]]:
+def load_data():
     if not PROCESSED_PATH.exists():
         raise FileNotFoundError(
-            f"Data processed tidak ditemukan: {PROCESSED_PATH}\n"
-            "Jalankan `python src/preprocessing.py` terlebih dahulu."
+            f"Data belum ada: {PROCESSED_PATH}. Jalankan src/preprocessing.py dulu."
         )
     if not MODEL_PATH.exists():
         raise FileNotFoundError(
-            f"Model tidak ditemukan: {MODEL_PATH}\n"
-            "Jalankan `python src/train_model.py` terlebih dahulu."
+            f"Model belum ada: {MODEL_PATH}. Jalankan src/train_model.py dulu."
         )
 
     df = pd.read_csv(PROCESSED_PATH, parse_dates=[TANGGAL])
@@ -101,27 +87,23 @@ def load_inputs() -> tuple[pd.DataFrame, dict[str, Any]]:
 
     if bundle["features"] != FEATURES:
         raise ValueError(
-            "Fitur pada model tidak sama dengan konfigurasi saat ini. "
-            "Latih ulang model dengan `python src/train_model.py`."
+            "Fitur model berbeda dengan script ini. Latih ulang model."
         )
 
     return df, bundle
 
 
-def build_predictions(
-    df: pd.DataFrame, bundle: dict[str, Any]
-) -> pd.DataFrame:
-    test = df.loc[df[SPLIT] == "test"].copy().sort_values([TANGGAL, STASIUN])
+def make_predictions(df, bundle):
+    test = df[df[SPLIT] == "test"].copy().sort_values([TANGGAL, STASIUN])
     if test.empty:
         raise ValueError("Test set kosong.")
 
     if test[FEATURES + [TARGET]].isna().any().any():
-        raise ValueError("Test set mengandung nilai kosong.")
+        raise ValueError("Test set masih ada nilai kosong.")
 
-    pipeline = bundle["pipeline"]
-    xgboost_pred = pipeline.predict(test[FEATURES])
+    pred = bundle["pipeline"].predict(test[FEATURES])
     # Indeks ISPU berada pada rentang 0-500.
-    xgboost_pred = np.clip(xgboost_pred, 0, 500)
+    pred = np.clip(pred, 0, 500)
 
     predictions = pd.DataFrame(
         {
@@ -129,36 +111,34 @@ def build_predictions(
             STASIUN: test[STASIUN].to_numpy(),
             "actual": test[TARGET].to_numpy(),
             "naive_pred": test["lag_1"].to_numpy(),
-            "xgboost_pred": xgboost_pred,
+            "xgboost_pred": pred,
         }
     ).sort_values([TANGGAL, STASIUN], ignore_index=True)
 
     if predictions[["actual", "naive_pred", "xgboost_pred"]].isna().any().any():
-        raise ValueError("Prediksi mengandung nilai kosong.")
+        raise ValueError("Prediksi masih ada nilai kosong.")
 
     return predictions
 
 
-def calculate_metrics(
-    predictions: pd.DataFrame,
-) -> tuple[pd.DataFrame, dict[str, float], dict[str, float]]:
-    naive = regression_metrics(predictions["actual"], predictions["naive_pred"])
-    xgboost = regression_metrics(predictions["actual"], predictions["xgboost_pred"])
+def calc_metrics(predictions):
+    naive = metrics(predictions["actual"], predictions["naive_pred"])
+    xgboost = metrics(predictions["actual"], predictions["xgboost_pred"])
 
-    metrics = pd.DataFrame(
+    table = pd.DataFrame(
         [
             {"model": "Naive Forecast", **naive},
             {"model": "XGBoost", **xgboost},
         ]
     )
-    return metrics, naive, xgboost
+    return table, naive, xgboost
 
 
-def calculate_metrics_per_station(predictions: pd.DataFrame) -> pd.DataFrame:
-    rows: list[dict[str, Any]] = []
+def station_metrics(predictions):
+    rows = []
     for station, group in predictions.groupby(STASIUN, sort=True):
-        naive = regression_metrics(group["actual"], group["naive_pred"])
-        xgboost = regression_metrics(group["actual"], group["xgboost_pred"])
+        naive = metrics(group["actual"], group["naive_pred"])
+        xgboost = metrics(group["actual"], group["xgboost_pred"])
         reduction = (
             (naive["MAE"] - xgboost["MAE"]) / naive["MAE"] * 100
             if naive["MAE"] > 0
@@ -178,18 +158,14 @@ def calculate_metrics_per_station(predictions: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _style_axis(axis: plt.Axes) -> None:
+def style_axis(axis):
     axis.spines["top"].set_visible(False)
     axis.spines["right"].set_visible(False)
     axis.grid(axis="both", color="#e5e7eb", linewidth=0.7)
     axis.set_axisbelow(True)
 
 
-def plot_actual_vs_predicted(
-    predictions: pd.DataFrame,
-    naive: dict[str, float],
-    xgboost: dict[str, float],
-) -> None:
+def plot_predictions(predictions, naive, xgboost):
     dates = predictions[TANGGAL]
     start, end = dates.min(), dates.max()
     n_observations = len(predictions)
@@ -256,9 +232,9 @@ def plot_actual_vs_predicted(
         if REPRESENTATIVE_STATION in set(predictions[STASIUN])
         else sorted(predictions[STASIUN].unique())[0]
     )
-    subset = predictions.loc[predictions[STASIUN] == station].sort_values(TANGGAL)
-    station_naive = regression_metrics(subset["actual"], subset["naive_pred"])
-    station_xgboost = regression_metrics(subset["actual"], subset["xgboost_pred"])
+    subset = predictions[predictions[STASIUN] == station].sort_values(TANGGAL)
+    station_naive = metrics(subset["actual"], subset["naive_pred"])
+    station_xgboost = metrics(subset["actual"], subset["xgboost_pred"])
 
     ax_bottom.plot(
         subset[TANGGAL],
@@ -304,19 +280,17 @@ def plot_actual_vs_predicted(
     )
 
     for axis in (ax_top, ax_bottom):
-        _style_axis(axis)
+        style_axis(axis)
         low, high = axis.get_ylim()
         axis.set_ylim(low, high + (high - low) * 0.10)
 
-    locator = mdates.DayLocator(interval=14)
-    formatter = mdates.DateFormatter("%d/%m")
-    ax_bottom.xaxis.set_major_locator(locator)
-    ax_bottom.xaxis.set_major_formatter(formatter)
+    ax_bottom.xaxis.set_major_locator(mdates.DayLocator(interval=14))
+    ax_bottom.xaxis.set_major_formatter(mdates.DateFormatter("%d/%m"))
     ax_bottom.set_xlim(start - pd.Timedelta(days=1), end + pd.Timedelta(days=1))
 
     fig.suptitle(
         "Aktual vs Prediksi Indeks PM2.5 pada Test Set "
-        f"({format_tanggal_id(start)} s.d. {format_tanggal_id(end)})",
+        f"({format_tanggal(start)} s.d. {format_tanggal(end)})",
         fontsize=14,
         fontweight="bold",
         x=0.06,
@@ -330,18 +304,16 @@ def plot_actual_vs_predicted(
         facecolor="white",
     )
     plt.close(fig)
-    LOGGER.info("Grafik disimpan: %s", ACTUAL_VS_PREDICTED_PATH)
+    print(f"Grafik: {ACTUAL_VS_PREDICTED_PATH}")
 
 
-def plot_model_comparison(
-    naive: dict[str, float], xgboost: dict[str, float]
-) -> None:
-    metric_names = ["MAE", "RMSE"]
-    naive_values = [naive[name] for name in metric_names]
-    xgboost_values = [xgboost[name] for name in metric_names]
+def plot_comparison(naive, xgboost):
+    names = ["MAE", "RMSE"]
+    naive_values = [naive[name] for name in names]
+    xgboost_values = [xgboost[name] for name in names]
 
     fig, axis = plt.subplots(figsize=(8.8, 5.6))
-    positions = np.arange(len(metric_names))
+    positions = np.arange(len(names))
     width = 0.34
 
     bars_naive = axis.bar(
@@ -371,7 +343,7 @@ def plot_model_comparison(
             color="#111827",
         )
 
-    axis.set_xticks(positions, metric_names)
+    axis.set_xticks(positions, names)
     axis.set_ylabel("Error (poin indeks PM2.5)")
     axis.set_title("Perbandingan MAE dan RMSE pada Test Set", loc="left")
     axis.legend(loc="upper right")
@@ -395,33 +367,32 @@ def plot_model_comparison(
             "edgecolor": "#bfdbfe",
         },
     )
-    _style_axis(axis)
+    style_axis(axis)
     fig.tight_layout()
     fig.savefig(
-        MODEL_COMPARISON_PATH,
+        COMPARISON_PATH,
         dpi=FIGURE_DPI,
         bbox_inches="tight",
         facecolor="white",
     )
     plt.close(fig)
-    LOGGER.info("Grafik disimpan: %s", MODEL_COMPARISON_PATH)
+    print(f"Grafik: {COMPARISON_PATH}")
 
 
-def plot_feature_importance(bundle: dict[str, Any]) -> None:
+def plot_importance(bundle):
     pipeline = bundle["pipeline"]
     preprocessor = pipeline.named_steps["preprocessor"]
     model = pipeline.named_steps["regressor"]
 
-    feature_names = np.asarray(preprocessor.get_feature_names_out())
+    names = np.asarray(preprocessor.get_feature_names_out())
     importances = np.asarray(model.feature_importances_)
-    if len(feature_names) != len(importances):
-        raise ValueError("Jumlah nama fitur dan nilai importance tidak sama.")
+    if len(names) != len(importances):
+        raise ValueError("Jumlah nama fitur dan importance tidak sama.")
 
     order = np.argsort(importances)
     top_n = min(15, len(order))
     selected = order[-top_n:]
-
-    labels = [name.replace("stasiun_", "") for name in feature_names[selected]]
+    labels = [name.replace("stasiun_", "") for name in names[selected]]
     values = importances[selected]
 
     fig, axis = plt.subplots(figsize=(9.2, 6.0))
@@ -436,20 +407,19 @@ def plot_feature_importance(bundle: dict[str, Any]) -> None:
     axis.set_xlabel("Gain (kontribusi relatif)")
     axis.set_title("Kontribusi Fitur Model XGBoost", loc="left")
     axis.set_xlim(0, max(values) * 1.18)
-    _style_axis(axis)
+    style_axis(axis)
     fig.tight_layout()
     fig.savefig(
-        FEATURE_IMPORTANCE_PATH,
+        IMPORTANCE_PATH,
         dpi=FIGURE_DPI,
         bbox_inches="tight",
         facecolor="white",
     )
     plt.close(fig)
-    LOGGER.info("Grafik disimpan: %s", FEATURE_IMPORTANCE_PATH)
+    print(f"Grafik: {IMPORTANCE_PATH}")
 
 
-def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
+def main():
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
     plt.rcParams.update(
         {
@@ -464,10 +434,10 @@ def main() -> None:
         }
     )
 
-    df, bundle = load_inputs()
-    predictions = build_predictions(df, bundle)
-    metrics, naive, xgboost = calculate_metrics(predictions)
-    metrics_per_station = calculate_metrics_per_station(predictions)
+    df, bundle = load_data()
+    predictions = make_predictions(df, bundle)
+    table, naive, xgboost = calc_metrics(predictions)
+    per_station = station_metrics(predictions)
 
     predictions.to_csv(
         PREDICTIONS_PATH,
@@ -475,12 +445,8 @@ def main() -> None:
         date_format="%Y-%m-%d",
         float_format="%.4f",
     )
-    metrics.to_csv(METRICS_PATH, index=False, float_format="%.4f")
-    metrics_per_station.to_csv(
-        METRICS_PER_STATION_PATH,
-        index=False,
-        float_format="%.4f",
-    )
+    table.to_csv(METRICS_PATH, index=False, float_format="%.4f")
+    per_station.to_csv(STATION_METRICS_PATH, index=False, float_format="%.4f")
 
     improvement = {
         "MAE_persen": float((naive["MAE"] - xgboost["MAE"]) / naive["MAE"] * 100),
@@ -515,24 +481,23 @@ def main() -> None:
             "versions": bundle["versions"],
         },
     }
-    with RUN_SUMMARY_PATH.open("w", encoding="utf-8") as file:
+    with SUMMARY_PATH.open("w", encoding="utf-8") as file:
         json.dump(summary, file, ensure_ascii=False, indent=2)
 
-    LOGGER.info("\n%s", metrics.to_string(index=False))
-    LOGGER.info(
-        "Penurunan error XGBoost vs Naive: MAE %.1f%% | RMSE %.1f%%",
-        improvement["MAE_persen"],
-        improvement["RMSE_persen"],
+    print(table.to_string(index=False))
+    print(
+        f"Penurunan error: MAE {improvement['MAE_persen']:.1f}% | "
+        f"RMSE {improvement['RMSE_persen']:.1f}%"
     )
 
-    plot_actual_vs_predicted(predictions, naive, xgboost)
-    plot_model_comparison(naive, xgboost)
-    plot_feature_importance(bundle)
+    plot_predictions(predictions, naive, xgboost)
+    plot_comparison(naive, xgboost)
+    plot_importance(bundle)
 
-    LOGGER.info("Prediksi disimpan: %s", PREDICTIONS_PATH)
-    LOGGER.info("Metrik disimpan: %s", METRICS_PATH)
-    LOGGER.info("Metrik per stasiun disimpan: %s", METRICS_PER_STATION_PATH)
-    LOGGER.info("Ringkasan evaluasi disimpan: %s", RUN_SUMMARY_PATH)
+    print(f"Prediksi: {PREDICTIONS_PATH}")
+    print(f"Metrik: {METRICS_PATH}")
+    print(f"Metrik per stasiun: {STATION_METRICS_PATH}")
+    print(f"Ringkasan: {SUMMARY_PATH}")
 
 
 if __name__ == "__main__":
