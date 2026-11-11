@@ -1,12 +1,4 @@
-"""Preprocessing dataset ISPU DKI Jakarta.
-
-Pipeline:
-1. Membaca file mentah berformat HTML (walau berekstensi .xls).
-2. Membersihkan tanggal, nama stasiun, tipe numerik, dan duplikasi.
-3. Membangun kalender harian lengkap per stasiun.
-4. Membuat fitur historis (lag dan rolling mean) tanpa data masa depan.
-5. Membagi tanggal secara kronologis menjadi train/validation/test.
-6. Menyimpan data siap model ke data/ispu_processed.csv beserta log.
+"""Preprocessing data ISPU DKI Jakarta.
 
 Jalankan dari folder root:
     python src/preprocessing.py
@@ -25,21 +17,25 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from config import (
-    FEATURES,
-    HISTORY_FEATURES,
-    NUMERIC_FEATURES,
-    PREPROCESSING_LOG_PATH,
-    PROCESSED_PATH,
-    RAW_PATH,
-    SPLIT,
-    SPLIT_LABELS,
-    SPLIT_RATIOS,
-    STASIUN,
-    TANGGAL,
-    TARGET,
-    ensure_directories,
-)
+ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = ROOT / "data"
+OUTPUTS_DIR = ROOT / "outputs"
+
+RAW_PATH = DATA_DIR / "ispu_raw.xls"
+PROCESSED_PATH = DATA_DIR / "ispu_processed.csv"
+PREPROCESSING_LOG_PATH = OUTPUTS_DIR / "preprocessing_log.json"
+
+TANGGAL = "tanggal"
+STASIUN = "stasiun"
+TARGET = "pm25_target"
+SPLIT = "split"
+
+HISTORY_FEATURES = ["lag_1", "lag_3", "lag_7", "rolling_mean_7"]
+NUMERIC_FEATURES = [*HISTORY_FEATURES, "bulan"]
+FEATURES = [STASIUN, *NUMERIC_FEATURES]
+
+SPLIT_LABELS = ("train", "validation", "test")
+SPLIT_RATIOS = {"train": 0.70, "validation": 0.15, "test": 0.15}
 
 LOGGER = logging.getLogger("preprocessing")
 
@@ -72,14 +68,13 @@ STATION_NAMES = {
 
 
 def _json_default(value: Any) -> Any:
-    """Konversi tipe numpy/pandas agar aman ditulis sebagai JSON."""
     if hasattr(value, "item"):
         return value.item()
     return str(value)
 
 
 def load_raw_data(path: Path = RAW_PATH) -> pd.DataFrame:
-    """Membaca tabel HTML dari file .xls mentah."""
+    """File mentah berekstensi .xls, tetapi isinya tabel HTML."""
     if not path.exists():
         raise FileNotFoundError(
             f"Dataset mentah tidak ditemukan: {path}\n"
@@ -104,7 +99,6 @@ def load_raw_data(path: Path = RAW_PATH) -> pd.DataFrame:
 
 
 def standardize_station(value: Any) -> str | None:
-    """Memetakan variasi nama stasiun ke satu nama kanonis."""
     text = " ".join(str(value).upper().split())
     match = re.match(r"^DKI\s*([1-5])\b", text)
     if not match:
@@ -113,7 +107,6 @@ def standardize_station(value: Any) -> str | None:
 
 
 def _parse_dates(df: pd.DataFrame) -> pd.Series:
-    """Menggabungkan periode_data (YYYYMM) dan tanggal (DD)."""
     period = (
         pd.to_numeric(df["periode_data"], errors="coerce")
         .astype("Int64")
@@ -131,7 +124,6 @@ def _parse_dates(df: pd.DataFrame) -> pd.Series:
 def clean_records(
     df_raw: pd.DataFrame, log: dict[str, Any]
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Membersihkan tanggal, stasiun, nilai numerik, dan duplikasi."""
     df = df_raw.copy()
     df["stasiun_raw"] = df["stasiun"].astype(str).str.strip()
     df["stasiun"] = df["stasiun_raw"].map(standardize_station)
@@ -208,7 +200,7 @@ def clean_records(
 def build_daily_panel(
     df_clean: pd.DataFrame, log: dict[str, Any]
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Membuat grid harian lengkap per stasiun tanpa imputasi nilai."""
+    """Membuat grid harian penuh per stasiun tanpa mengisi nilai yang kosong."""
     start = df_clean[TANGGAL].min()
     end = df_clean[TANGGAL].max()
     dates = pd.date_range(start, end, freq="D")
@@ -263,7 +255,7 @@ def build_daily_panel(
 def add_temporal_split(
     panel: pd.DataFrame, log: dict[str, Any]
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Membagi tanggal unik secara kronologis 70/15/15."""
+    """Membagi tanggal unik secara kronologis, bukan membagi baris secara acak."""
     dates = sorted(pd.Timestamp(value) for value in panel[TANGGAL].unique())
     n_dates = len(dates)
     n_train = int(round(n_dates * SPLIT_RATIOS["train"]))
@@ -322,7 +314,7 @@ def add_temporal_split(
 def add_features(
     panel: pd.DataFrame, log: dict[str, Any]
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Membuat lag/rolling per stasiun dan menyaring sampel yang layak."""
+    """Lag dan rolling dihitung per stasiun dari nilai sebelum tanggal target."""
     df = panel.sort_values([STASIUN, TANGGAL]).copy()
     grouped = df.groupby(STASIUN, sort=False)["pm_duakomalima"]
 
@@ -400,47 +392,46 @@ def add_features(
 
 
 def build_processed_dataset() -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Menjalankan seluruh tahap preprocessing dan mengembalikan data + log."""
     log: dict[str, Any] = {
         "dibuat_pada": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "file_sumber": str(RAW_PATH.relative_to(RAW_PATH.parents[1])),
+        "file_sumber": str(RAW_PATH.relative_to(ROOT)),
     }
 
-    LOGGER.info("[1/4] Membaca data mentah: %s", RAW_PATH)
+    LOGGER.info("Membaca data mentah: %s", RAW_PATH)
     df_raw = load_raw_data()
-    LOGGER.info("      %d baris x %d kolom", *df_raw.shape)
+    LOGGER.info("%d baris x %d kolom", *df_raw.shape)
 
-    LOGGER.info("[2/4] Membersihkan tanggal, stasiun, dan nilai numerik")
+    LOGGER.info("Membersihkan tanggal, stasiun, dan nilai numerik")
     df_clean, log = clean_records(df_raw, log)
     cleaning = log["cleaning"]
     LOGGER.info(
-        "      Tanggal tidak valid: %d | Duplikasi: %d | PM2.5 kosong: %d",
+        "Tanggal tidak valid: %d | Duplikasi: %d | PM2.5 kosong: %d",
         len(cleaning["tanggal_tidak_valid"]),
         cleaning["duplikasi_stasiun_tanggal_dibuang"],
         cleaning["pm25_kosong_mentah"],
     )
 
-    LOGGER.info("[3/4] Membangun kalender harian dan fitur historis")
+    LOGGER.info("Membangun kalender harian dan fitur historis")
     panel, log = build_daily_panel(df_clean, log)
     panel, log = add_temporal_split(panel, log)
     model_df, log = add_features(panel, log)
     fitur = log["fitur"]
     LOGGER.info(
-        "      Hari stasiun hilang: %d | Sampel siap model: %d",
+        "Hari stasiun hilang: %d | Sampel siap model: %d",
         log["kalender"]["jumlah_hari_stasiun_hilang"],
         fitur["jumlah_sampel_siap_model"],
     )
     LOGGER.info(
-        "      Dibuang: target kosong=%d, riwayat tidak lengkap=%d",
+        "Dibuang: target kosong=%d, riwayat tidak lengkap=%d",
         fitur["target_kosong"],
         fitur["riwayat_tidak_lengkap"],
     )
 
-    LOGGER.info("[4/4] Split temporal berdasarkan tanggal unik")
+    LOGGER.info("Split temporal berdasarkan tanggal unik")
     for label in SPLIT_LABELS:
         info = log["split"][label]
         LOGGER.info(
-            "      %-10s : %d tanggal (%s s.d. %s), %d baris",
+            "%-10s : %d tanggal (%s s.d. %s), %d baris",
             label,
             info["jumlah_tanggal"],
             info["mulai"],
@@ -453,7 +444,8 @@ def build_processed_dataset() -> tuple[pd.DataFrame, dict[str, Any]]:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
-    ensure_directories()
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
     model_df, log = build_processed_dataset()
 

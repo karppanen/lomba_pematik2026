@@ -1,12 +1,5 @@
 """Pelatihan dan validasi model XGBoost.
 
-Alur:
-1. Membaca data hasil preprocessing.
-2. Memisahkan train/validation/test berdasarkan kolom split.
-3. Mencari hyperparameter dengan validation set (test tidak disentuh).
-4. Melatih ulang model final pada train+validation.
-5. Menyimpan pipeline lengkap (encoder + model) ke models/xgboost_model.joblib.
-
 Jalankan dari folder root:
     python src/train_model.py
 """
@@ -18,6 +11,7 @@ import logging
 import time
 from datetime import datetime
 from itertools import product
+from pathlib import Path
 from typing import Any
 
 import joblib
@@ -31,27 +25,43 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 from xgboost import XGBRegressor
 
-from config import (
-    CATEGORICAL_FEATURES,
-    EARLY_STOPPING_ROUNDS,
-    FEATURES,
-    FIXED_XGB_PARAMS,
-    MAX_BOOSTING_ROUNDS,
-    MODEL_PATH,
-    NUMERIC_FEATURES,
-    PROCESSED_PATH,
-    RANDOM_STATE,
-    REFIT_ON_TRAIN_VAL,
-    SPLIT,
-    SPLIT_LABELS,
-    STASIUN,
-    TANGGAL,
-    TARGET,
-    TRAINING_SUMMARY_PATH,
-    TUNING_GRID,
-    TUNING_RESULTS_PATH,
-    ensure_directories,
-)
+ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = ROOT / "data"
+MODELS_DIR = ROOT / "models"
+OUTPUTS_DIR = ROOT / "outputs"
+
+PROCESSED_PATH = DATA_DIR / "ispu_processed.csv"
+MODEL_PATH = MODELS_DIR / "xgboost_model.joblib"
+TUNING_RESULTS_PATH = OUTPUTS_DIR / "tuning_results.csv"
+TRAINING_SUMMARY_PATH = OUTPUTS_DIR / "training_summary.json"
+
+TANGGAL = "tanggal"
+STASIUN = "stasiun"
+TARGET = "pm25_target"
+SPLIT = "split"
+
+CATEGORICAL_FEATURES = [STASIUN]
+NUMERIC_FEATURES = ["lag_1", "lag_3", "lag_7", "rolling_mean_7", "bulan"]
+FEATURES = [*CATEGORICAL_FEATURES, *NUMERIC_FEATURES]
+
+SPLIT_LABELS = ("train", "validation", "test")
+RANDOM_STATE = 42
+
+# Ditentukan sebelum test dievaluasi: model final dilatih ulang pada train+validation.
+REFIT_ON_TRAIN_VAL = True
+
+TUNING_GRID = {
+    "max_depth": [2, 3, 4],
+    "learning_rate": [0.03, 0.05, 0.10],
+    "min_child_weight": [1, 5],
+}
+FIXED_XGB_PARAMS = {
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "reg_lambda": 1.0,
+}
+MAX_BOOSTING_ROUNDS = 1500
+EARLY_STOPPING_ROUNDS = 50
 
 LOGGER = logging.getLogger("training")
 
@@ -63,14 +73,12 @@ def _json_default(value: Any) -> Any:
 
 
 def regression_metrics(actual: pd.Series, predicted: np.ndarray) -> dict[str, float]:
-    """Menghitung MAE dan RMSE dalam satuan poin indeks."""
     mae = mean_absolute_error(actual, predicted)
     rmse = np.sqrt(mean_squared_error(actual, predicted))
     return {"MAE": float(mae), "RMSE": float(rmse)}
 
 
 def load_processed_data(path=PROCESSED_PATH) -> pd.DataFrame:
-    """Membaca data siap model dan memvalidasi kolom penting."""
     if not path.exists():
         raise FileNotFoundError(
             f"Data hasil preprocessing tidak ditemukan: {path}\n"
@@ -103,7 +111,7 @@ def load_processed_data(path=PROCESSED_PATH) -> pd.DataFrame:
 def split_frames(
     df: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Mengambil subset train/validation/test dan memastikan tidak tumpang tindih."""
+    """Memastikan tidak ada tanggal yang masuk lebih dari satu split."""
     train = df.loc[df[SPLIT] == "train"].copy()
     validation = df.loc[df[SPLIT] == "validation"].copy()
     test = df.loc[df[SPLIT] == "test"].copy()
@@ -132,7 +140,6 @@ def split_frames(
 
 
 def build_preprocessor() -> ColumnTransformer:
-    """One-hot encoding stasiun + fitur numerik apa adanya."""
     return ColumnTransformer(
         transformers=[
             (
@@ -157,7 +164,6 @@ def build_pipeline(regressor: XGBRegressor) -> Pipeline:
 
 
 def iter_candidates() -> list[dict[str, Any]]:
-    """Kombinasi hyperparameter yang akan diuji pada validation set."""
     keys = list(TUNING_GRID)
     return [
         {**dict(zip(keys, values)), **FIXED_XGB_PARAMS}
@@ -167,8 +173,8 @@ def iter_candidates() -> list[dict[str, Any]]:
 
 def tune_xgboost(
     train: pd.DataFrame, validation: pd.DataFrame
-) -> tuple[pd.DataFrame, dict[str, Any], dict[str, float], np.ndarray]:
-    """Mencari konfigurasi terbaik berdasarkan validation MAE."""
+) -> tuple[pd.DataFrame, dict[str, Any], dict[str, float]]:
+    """Pemilihan hyperparameter hanya memakai validation MAE."""
     preprocessor = build_preprocessor()
     x_train = preprocessor.fit_transform(train[FEATURES])
     x_validation = preprocessor.transform(validation[FEATURES])
@@ -179,10 +185,7 @@ def tune_xgboost(
     results: list[dict[str, Any]] = []
     best_row: dict[str, Any] | None = None
 
-    LOGGER.info(
-        "Menguji %d kandidat hyperparameter pada validation set",
-        len(candidates),
-    )
+    LOGGER.info("Menguji %d kandidat hyperparameter", len(candidates))
     for index, params in enumerate(candidates, start=1):
         started = time.perf_counter()
         model = XGBRegressor(
@@ -250,7 +253,8 @@ def tune_xgboost(
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
-    ensure_directories()
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
     LOGGER.info("Membaca data processed: %s", PROCESSED_PATH)
     df = load_processed_data()

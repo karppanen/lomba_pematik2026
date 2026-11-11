@@ -1,21 +1,20 @@
-# Menjalankan seluruh pipeline utama dari folder root.
+# Menjalankan preprocessing, training, dan evaluasi secara berurutan.
 # Penggunaan: .\run_pipeline.ps1
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $projectRoot
 
-Write-Host "=== 1/3 Preprocessing ===" -ForegroundColor Cyan
+Write-Host "Preprocessing..." -ForegroundColor Cyan
 python src/preprocessing.py
 if ($LASTEXITCODE -ne 0) { throw "Preprocessing gagal. Pipeline dihentikan." }
 
-Write-Host "=== 2/3 Training XGBoost ===" -ForegroundColor Cyan
+Write-Host "Training XGBoost..." -ForegroundColor Cyan
 python src/train_model.py
 if ($LASTEXITCODE -ne 0) { throw "Training gagal. Pipeline dihentikan." }
 
-Write-Host "=== 3/3 Evaluasi ===" -ForegroundColor Cyan
+Write-Host "Evaluasi..." -ForegroundColor Cyan
 python src/evaluate.py
 if ($LASTEXITCODE -ne 0) { throw "Evaluasi gagal. Pipeline dihentikan." }
 
-Write-Host ""
-Write-Host "Selesai. Lihat outputs/metrics.csv dan outputs/figures/." -ForegroundColor Green
+Write-Host "Selesai. Hasil ada di outputs/." -ForegroundColor Green

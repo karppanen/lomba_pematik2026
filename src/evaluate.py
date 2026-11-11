@@ -1,15 +1,6 @@
 """Evaluasi Naive Forecast dan XGBoost pada test set yang sama.
 
-Output:
-- outputs/predictions.csv
-- outputs/metrics.csv
-- outputs/metrics_per_station.csv
-- outputs/run_summary.json
-- outputs/figures/actual_vs_predicted.png
-- outputs/figures/model_comparison.png
-- outputs/figures/feature_importance.png
-
-Jalankan dari folder root:
+Jalankan setelah training:
     python src/evaluate.py
 """
 
@@ -18,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import joblib
@@ -31,25 +23,31 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
-from config import (
-    ACTUAL_VS_PREDICTED_PATH,
-    FEATURE_IMPORTANCE_PATH,
-    FEATURES,
-    FIGURE_DPI,
-    METRICS_PATH,
-    METRICS_PER_STATION_PATH,
-    MODEL_COMPARISON_PATH,
-    MODEL_PATH,
-    PREDICTIONS_PATH,
-    PROCESSED_PATH,
-    REPRESENTATIVE_STATION,
-    RUN_SUMMARY_PATH,
-    SPLIT,
-    STASIUN,
-    TANGGAL,
-    TARGET,
-    ensure_directories,
-)
+ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = ROOT / "data"
+MODELS_DIR = ROOT / "models"
+OUTPUTS_DIR = ROOT / "outputs"
+FIGURES_DIR = OUTPUTS_DIR / "figures"
+
+PROCESSED_PATH = DATA_DIR / "ispu_processed.csv"
+MODEL_PATH = MODELS_DIR / "xgboost_model.joblib"
+PREDICTIONS_PATH = OUTPUTS_DIR / "predictions.csv"
+METRICS_PATH = OUTPUTS_DIR / "metrics.csv"
+METRICS_PER_STATION_PATH = OUTPUTS_DIR / "metrics_per_station.csv"
+RUN_SUMMARY_PATH = OUTPUTS_DIR / "run_summary.json"
+
+ACTUAL_VS_PREDICTED_PATH = FIGURES_DIR / "actual_vs_predicted.png"
+MODEL_COMPARISON_PATH = FIGURES_DIR / "model_comparison.png"
+FEATURE_IMPORTANCE_PATH = FIGURES_DIR / "feature_importance.png"
+
+TANGGAL = "tanggal"
+STASIUN = "stasiun"
+TARGET = "pm25_target"
+SPLIT = "split"
+FEATURES = ["stasiun", "lag_1", "lag_3", "lag_7", "rolling_mean_7", "bulan"]
+
+REPRESENTATIVE_STATION = "DKI1 Bundaran HI"
+FIGURE_DPI = 200
 
 LOGGER = logging.getLogger("evaluation")
 
@@ -80,7 +78,6 @@ def format_tanggal_id(value: pd.Timestamp) -> str:
 
 
 def regression_metrics(actual: pd.Series, predicted: np.ndarray) -> dict[str, float]:
-    """MAE dan RMSE dalam satuan poin indeks."""
     return {
         "MAE": float(mean_absolute_error(actual, predicted)),
         "RMSE": float(np.sqrt(mean_squared_error(actual, predicted))),
@@ -114,7 +111,6 @@ def load_inputs() -> tuple[pd.DataFrame, dict[str, Any]]:
 def build_predictions(
     df: pd.DataFrame, bundle: dict[str, Any]
 ) -> pd.DataFrame:
-    """Membuat prediksi Naive dan XGBoost pada baris test yang identik."""
     test = df.loc[df[SPLIT] == "test"].copy().sort_values([TANGGAL, STASIUN])
     if test.empty:
         raise ValueError("Test set kosong.")
@@ -124,7 +120,7 @@ def build_predictions(
 
     pipeline = bundle["pipeline"]
     xgboost_pred = pipeline.predict(test[FEATURES])
-    # Indeks ISPU berada pada rentang 0-500; jaga prediksi tetap fisis.
+    # Indeks ISPU berada pada rentang 0-500.
     xgboost_pred = np.clip(xgboost_pred, 0, 500)
 
     predictions = pd.DataFrame(
@@ -320,7 +316,7 @@ def plot_actual_vs_predicted(
 
     fig.suptitle(
         "Aktual vs Prediksi Indeks PM2.5 pada Test Set "
-        f"({format_tanggal_id(start)} – {format_tanggal_id(end)})",
+        f"({format_tanggal_id(start)} s.d. {format_tanggal_id(end)})",
         fontsize=14,
         fontweight="bold",
         x=0.06,
@@ -425,9 +421,7 @@ def plot_feature_importance(bundle: dict[str, Any]) -> None:
     top_n = min(15, len(order))
     selected = order[-top_n:]
 
-    labels = [
-        name.replace("stasiun_", "") for name in feature_names[selected]
-    ]
+    labels = [name.replace("stasiun_", "") for name in feature_names[selected]]
     values = importances[selected]
 
     fig, axis = plt.subplots(figsize=(9.2, 6.0))
@@ -456,7 +450,7 @@ def plot_feature_importance(bundle: dict[str, Any]) -> None:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
-    ensure_directories()
+    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
     plt.rcParams.update(
         {
             "font.family": "DejaVu Sans",
@@ -470,10 +464,7 @@ def main() -> None:
         }
     )
 
-    LOGGER.info("Memuat data processed dan model")
     df, bundle = load_inputs()
-
-    LOGGER.info("Menjalankan Naive Forecast dan XGBoost pada test set")
     predictions = build_predictions(df, bundle)
     metrics, naive, xgboost = calculate_metrics(predictions)
     metrics_per_station = calculate_metrics_per_station(predictions)
