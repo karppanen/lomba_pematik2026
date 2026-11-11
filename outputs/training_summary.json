@@ -1,0 +1,90 @@
+{
+  "dibuat_pada": "2026-11-11T15:34:22+07:00",
+  "data": {
+    "train": {
+      "jumlah_baris": 2186,
+      "jumlah_tanggal": 483,
+      "mulai": "2024-01-08",
+      "selesai": "2025-05-04"
+    },
+    "validation": {
+      "jumlah_baris": 446,
+      "jumlah_tanggal": 105,
+      "mulai": "2025-05-05",
+      "selesai": "2025-08-17"
+    },
+    "test": {
+      "jumlah_baris": 449,
+      "jumlah_tanggal": 105,
+      "mulai": "2025-08-18",
+      "selesai": "2025-11-30"
+    }
+  },
+  "tuning": {
+    "metrik_pemilihan": "validation MAE",
+    "jumlah_kandidat": 18,
+    "grid": {
+      "max_depth": [
+        2,
+        3,
+        4
+      ],
+      "learning_rate": [
+        0.03,
+        0.05,
+        0.1
+      ],
+      "min_child_weight": [
+        1,
+        5
+      ]
+    },
+    "parameter_tetap": {
+      "subsample": 0.8,
+      "colsample_bytree": 0.8,
+      "reg_lambda": 1.0
+    },
+    "max_rounds": 1500,
+    "early_stopping_rounds": 50
+  },
+  "model_terbaik": {
+    "params": {
+      "max_depth": 2,
+      "learning_rate": 0.1,
+      "min_child_weight": 5,
+      "subsample": 0.8,
+      "colsample_bytree": 0.8,
+      "reg_lambda": 1.0
+    },
+    "best_iteration": 74,
+    "rounds_refit": 75,
+    "validation_MAE": 12.492563410190188,
+    "validation_RMSE": 15.939977712188004
+  },
+  "baseline_naive_validation": {
+    "MAE": 15.015695067264573,
+    "RMSE": 19.269332497206342
+  },
+  "model_final": {
+    "dilatih_pada": "train+validation",
+    "jumlah_baris": 2632,
+    "rentang_tanggal": {
+      "mulai": "2024-01-08",
+      "selesai": "2025-08-17"
+    }
+  },
+  "fitur": [
+    "stasiun",
+    "lag_1",
+    "lag_3",
+    "lag_7",
+    "rolling_mean_7",
+    "bulan"
+  ],
+  "versi": {
+    "xgboost": "2.1.4",
+    "scikit_learn": "1.5.0",
+    "pandas": "2.2.3",
+    "numpy": "1.26.4"
+  }
+}

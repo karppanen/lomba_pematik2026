@@ -1,0 +1,242 @@
+{
+  "dibuat_pada": "2026-11-11T15:34:17+07:00",
+  "file_sumber": "data\\ispu_raw.xls",
+  "cleaning": {
+    "jumlah_baris_mentah": 3501,
+    "jumlah_kolom_mentah": 13,
+    "kolom_mentah": [
+      "periode_data",
+      "bulan",
+      "tanggal",
+      "stasiun",
+      "pm_sepuluh",
+      "pm_duakomalima",
+      "sulfur_dioksida",
+      "karbon_monoksida",
+      "ozon",
+      "nitrogen_dioksida",
+      "max",
+      "parameter_pencemar_kritis",
+      "kategori"
+    ],
+    "variasi_nama_stasiun": [
+      {
+        "stasiun_raw": "DKI1 BUNDARAN HOTEL INDONESIA (HI)",
+        "stasiun": "DKI1 Bundaran HI",
+        "jumlah_baris": 579
+      },
+      {
+        "stasiun_raw": "DKI1 BUNDARAN HOTEL INDONESIA HI",
+        "stasiun": "DKI1 Bundaran HI",
+        "jumlah_baris": 31
+      },
+      {
+        "stasiun_raw": "DKI1 BUNDERAN HI",
+        "stasiun": "DKI1 Bundaran HI",
+        "jumlah_baris": 90
+      },
+      {
+        "stasiun_raw": "DKI2 KELAPA GADING",
+        "stasiun": "DKI2 Kelapa Gading",
+        "jumlah_baris": 700
+      },
+      {
+        "stasiun_raw": "DKI3 JAGAKARSA",
+        "stasiun": "DKI3 Jagakarsa",
+        "jumlah_baris": 700
+      },
+      {
+        "stasiun_raw": "DKI4 LUBANG BUAYA",
+        "stasiun": "DKI4 Lubang Buaya",
+        "jumlah_baris": 700
+      },
+      {
+        "stasiun_raw": "DKI5 KEBON JERUK",
+        "stasiun": "DKI5 Kebon Jeruk",
+        "jumlah_baris": 550
+      },
+      {
+        "stasiun_raw": "DKI5 KEBON JERUK JAKARTA BARAT",
+        "stasiun": "DKI5 Kebon Jeruk",
+        "jumlah_baris": 150
+      }
+    ],
+    "tanggal_tidak_valid": [
+      {
+        "periode_data": 202509,
+        "bulan": 9,
+        "tanggal": 31,
+        "stasiun_raw": "DKI5 KEBON JERUK",
+        "stasiun": "DKI5 Kebon Jeruk",
+        "pm_duakomalima": null,
+        "alasan": "Tanggal tidak ada dalam kalender"
+      }
+    ],
+    "duplikasi_stasiun_tanggal_dibuang": 0,
+    "pm25_kosong_mentah": 61,
+    "pm25_kosong_setelah_cleaning": 60,
+    "nilai_numerik_kosong": {
+      "pm_sepuluh": 263,
+      "pm_duakomalima": 60,
+      "sulfur_dioksida": 55,
+      "karbon_monoksida": 49,
+      "ozon": 45,
+      "nitrogen_dioksida": 68,
+      "max": 7
+    },
+    "rentang_tanggal_setelah_cleaning": {
+      "mulai": "2024-01-01",
+      "selesai": "2025-11-30"
+    },
+    "jumlah_baris_setelah_cleaning": 3500
+  },
+  "kalender": {
+    "jumlah_tanggal_unik": 700,
+    "tanggal_mulai": "2024-01-01",
+    "tanggal_selesai": "2025-11-30",
+    "jumlah_stasiun": 5,
+    "daftar_stasiun": [
+      "DKI1 Bundaran HI",
+      "DKI2 Kelapa Gading",
+      "DKI3 Jagakarsa",
+      "DKI4 Lubang Buaya",
+      "DKI5 Kebon Jeruk"
+    ],
+    "jumlah_hari_stasiun_diharapkan": 3500,
+    "jumlah_hari_stasiun_teramati": 3500,
+    "jumlah_pm25_valid": 3440,
+    "jumlah_hari_stasiun_hilang": 0,
+    "contoh_hari_stasiun_hilang": []
+  },
+  "split": {
+    "rasio": {
+      "train": 0.7,
+      "validation": 0.15,
+      "test": 0.15
+    },
+    "jumlah_tanggal_unik": 700,
+    "train": {
+      "jumlah_tanggal": 490,
+      "mulai": "2024-01-01",
+      "selesai": "2025-05-04",
+      "jumlah_baris_setelah_fitur": 2186,
+      "rentang_baris_setelah_fitur": {
+        "mulai": "2024-01-08",
+        "selesai": "2025-05-04"
+      }
+    },
+    "validation": {
+      "jumlah_tanggal": 105,
+      "mulai": "2025-05-05",
+      "selesai": "2025-08-17",
+      "jumlah_baris_setelah_fitur": 446,
+      "rentang_baris_setelah_fitur": {
+        "mulai": "2025-05-05",
+        "selesai": "2025-08-17"
+      }
+    },
+    "test": {
+      "jumlah_tanggal": 105,
+      "mulai": "2025-08-18",
+      "selesai": "2025-11-30",
+      "jumlah_baris_setelah_fitur": 449,
+      "rentang_baris_setelah_fitur": {
+        "mulai": "2025-08-18",
+        "selesai": "2025-11-30"
+      }
+    }
+  },
+  "fitur": {
+    "definisi": {
+      "lag_1": "PM2.5 pada T-1",
+      "lag_3": "PM2.5 pada T-3",
+      "lag_7": "PM2.5 pada T-7",
+      "rolling_mean_7": "Rata-rata PM2.5 T-7 sampai T-1 (tanpa T)",
+      "bulan": "Bulan dari tanggal target T",
+      "stasiun": "Identitas stasiun (one-hot saat training)"
+    },
+    "jumlah_baris_panel": 3500,
+    "target_kosong": 60,
+    "riwayat_tidak_lengkap": 359,
+    "total_dibuang": 419,
+    "contoh_dibuang": [
+      {
+        "tanggal": "2024-01-01",
+        "stasiun": "DKI1 Bundaran HI",
+        "alasan": "Riwayat historis tidak lengkap",
+        "kolom_riwayat_kosong": "lag_1, lag_3, lag_7, rolling_mean_7"
+      },
+      {
+        "tanggal": "2024-01-02",
+        "stasiun": "DKI1 Bundaran HI",
+        "alasan": "Riwayat historis tidak lengkap",
+        "kolom_riwayat_kosong": "lag_3, lag_7, rolling_mean_7"
+      },
+      {
+        "tanggal": "2024-01-03",
+        "stasiun": "DKI1 Bundaran HI",
+        "alasan": "Riwayat historis tidak lengkap",
+        "kolom_riwayat_kosong": "lag_3, lag_7, rolling_mean_7"
+      },
+      {
+        "tanggal": "2024-01-04",
+        "stasiun": "DKI1 Bundaran HI",
+        "alasan": "Target PM2.5 kosong",
+        "kolom_riwayat_kosong": "lag_7, rolling_mean_7"
+      },
+      {
+        "tanggal": "2024-01-05",
+        "stasiun": "DKI1 Bundaran HI",
+        "alasan": "Riwayat historis tidak lengkap",
+        "kolom_riwayat_kosong": "lag_1, lag_7, rolling_mean_7"
+      },
+      {
+        "tanggal": "2024-01-06",
+        "stasiun": "DKI1 Bundaran HI",
+        "alasan": "Riwayat historis tidak lengkap",
+        "kolom_riwayat_kosong": "lag_7, rolling_mean_7"
+      },
+      {
+        "tanggal": "2024-01-07",
+        "stasiun": "DKI1 Bundaran HI",
+        "alasan": "Riwayat historis tidak lengkap",
+        "kolom_riwayat_kosong": "lag_3, lag_7, rolling_mean_7"
+      },
+      {
+        "tanggal": "2024-01-08",
+        "stasiun": "DKI1 Bundaran HI",
+        "alasan": "Riwayat historis tidak lengkap",
+        "kolom_riwayat_kosong": "rolling_mean_7"
+      },
+      {
+        "tanggal": "2024-01-09",
+        "stasiun": "DKI1 Bundaran HI",
+        "alasan": "Riwayat historis tidak lengkap",
+        "kolom_riwayat_kosong": "rolling_mean_7"
+      },
+      {
+        "tanggal": "2024-01-10",
+        "stasiun": "DKI1 Bundaran HI",
+        "alasan": "Riwayat historis tidak lengkap",
+        "kolom_riwayat_kosong": "rolling_mean_7"
+      },
+      {
+        "tanggal": "2024-01-11",
+        "stasiun": "DKI1 Bundaran HI",
+        "alasan": "Riwayat historis tidak lengkap",
+        "kolom_riwayat_kosong": "lag_7, rolling_mean_7"
+      },
+      {
+        "tanggal": "2024-01-29",
+        "stasiun": "DKI1 Bundaran HI",
+        "alasan": "Target PM2.5 kosong",
+        "kolom_riwayat_kosong": ""
+      }
+    ],
+    "jumlah_sampel_siap_model": 3081,
+    "rentang_sampel": {
+      "mulai": "2024-01-08",
+      "selesai": "2025-11-30"
+    }
+  }
+}

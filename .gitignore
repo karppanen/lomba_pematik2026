@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Status izin redistribusi berkas sumber belum diverifikasi.
+# Jangan mengunggah salinan data mentah ke repositori publik sebelum ada kepastian lisensi.
+data/raw/
+data/ispu_raw.xls
+
+# Artefak model besar; dapat dihasilkan ulang dengan src/train_model.py
+models/*.joblib
+outputs/model.joblib
+
+# Berkas sementara
+~$*
+.DS_Store
+Thumbs.db

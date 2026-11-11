@@ -1,0 +1,51 @@
+{
+  "dibuat_pada": "2026-11-11T15:34:25+07:00",
+  "test": {
+    "jumlah_baris": 449,
+    "jumlah_tanggal": 105,
+    "jumlah_stasiun": 5,
+    "mulai": "2025-08-18",
+    "selesai": "2025-11-30",
+    "rata_rata_aktual": 70.17594654788418,
+    "standar_deviasi_aktual": 19.926712835430433
+  },
+  "metrics": {
+    "Naive Forecast": {
+      "MAE": 11.997772828507795,
+      "RMSE": 15.773098803967873
+    },
+    "XGBoost": {
+      "MAE": 10.557915417813511,
+      "RMSE": 13.579926897531086
+    }
+  },
+  "penurunan_error_xgboost_persen": {
+    "MAE_persen": 12.001039120136133,
+    "RMSE_persen": 13.904508769608881
+  },
+  "model": {
+    "best_params": {
+      "max_depth": 2,
+      "learning_rate": 0.1,
+      "min_child_weight": 5,
+      "subsample": 0.8,
+      "colsample_bytree": 0.8,
+      "reg_lambda": 1.0
+    },
+    "best_iteration": 74,
+    "rounds_refit": 75,
+    "refit_on_train_val": true,
+    "trained_on": "train+validation",
+    "validation_metrics": {
+      "MAE": 12.492563410190188,
+      "RMSE": 15.939977712188004
+    },
+    "trained_at": "2026-11-11T15:34:22+07:00",
+    "versions": {
+      "xgboost": "2.1.4",
+      "scikit_learn": "1.5.0",
+      "pandas": "2.2.3",
+      "numpy": "1.26.4"
+    }
+  }
+}
