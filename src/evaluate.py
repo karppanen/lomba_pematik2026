@@ -38,6 +38,7 @@ FEATURES = ["stasiun", "lag_1", "lag_3", "lag_7", "rolling_mean_7", "bulan"]
 
 REPRESENTATIVE_STATION = "DKI1 Bundaran HI"
 FIGURE_DPI = 200
+DATA_SOURCE_NOTE = "Sumber data: Portal Data Terbuka Pemprov DKI Jakarta (2024-2025)"
 
 COLORS = {
     "actual": "#111827",
@@ -165,6 +166,18 @@ def style_axis(axis):
     axis.set_axisbelow(True)
 
 
+def add_source_caption(fig):
+    fig.text(
+        0.01,
+        0.005,
+        DATA_SOURCE_NOTE,
+        fontsize=8.5,
+        color="#6b7280",
+        ha="left",
+        va="bottom",
+    )
+
+
 def plot_predictions(predictions, naive, xgboost):
     dates = predictions[TANGGAL]
     start, end = dates.min(), dates.max()
@@ -207,7 +220,7 @@ def plot_predictions(predictions, naive, xgboost):
         label="XGBoost",
     )
     ax_top.set_title("A. Rata-rata harian seluruh stasiun", loc="left")
-    ax_top.set_ylabel("Indeks PM2.5")
+    ax_top.set_ylabel("Indeks PM2.5 (tanpa satuan)")
     ax_top.legend(loc="upper left", ncol=3)
     ax_top.text(
         0.995,
@@ -259,7 +272,7 @@ def plot_predictions(predictions, naive, xgboost):
         label="XGBoost",
     )
     ax_bottom.set_title(f"B. Stasiun representatif: {station}", loc="left")
-    ax_bottom.set_ylabel("Indeks PM2.5")
+    ax_bottom.set_ylabel("Indeks PM2.5 (tanpa satuan)")
     ax_bottom.set_xlabel("Tanggal (test set)")
     ax_bottom.text(
         0.995,
@@ -296,7 +309,8 @@ def plot_predictions(predictions, naive, xgboost):
         x=0.06,
         ha="left",
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    fig.tight_layout(rect=(0, 0.025, 1, 0.95))
+    add_source_caption(fig)
     fig.savefig(
         ACTUAL_VS_PREDICTED_PATH,
         dpi=FIGURE_DPI,
@@ -344,6 +358,7 @@ def plot_comparison(naive, xgboost):
         )
 
     axis.set_xticks(positions, names)
+    axis.set_xlabel("Metrik evaluasi")
     axis.set_ylabel("Error (poin indeks PM2.5)")
     axis.set_title("Perbandingan MAE dan RMSE pada Test Set", loc="left")
     axis.legend(loc="upper right")
@@ -368,7 +383,8 @@ def plot_comparison(naive, xgboost):
         },
     )
     style_axis(axis)
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0.03, 1, 1))
+    add_source_caption(fig)
     fig.savefig(
         COMPARISON_PATH,
         dpi=FIGURE_DPI,
@@ -404,11 +420,13 @@ def plot_importance(bundle):
         fontsize=9,
         color="#111827",
     )
-    axis.set_xlabel("Gain (kontribusi relatif)")
+    axis.set_xlabel("Gain (proporsi kontribusi relatif)")
+    axis.set_ylabel("Fitur prediktor")
     axis.set_title("Kontribusi Fitur Model XGBoost", loc="left")
     axis.set_xlim(0, max(values) * 1.18)
     style_axis(axis)
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0.03, 1, 1))
+    add_source_caption(fig)
     fig.savefig(
         IMPORTANCE_PATH,
         dpi=FIGURE_DPI,
